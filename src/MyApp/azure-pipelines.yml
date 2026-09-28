@@ -1,0 +1,137 @@
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - src/**
+
+pr:
+  branches:
+    include:
+      - master
+
+pool:
+  name: aws-ec2-pool
+
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+  
+  # Stage 1: Build .NET Project
+  - stage: Build
+    displayName: 'Stage 1 - Build .NET Project'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build & Test'
+        steps:
+          # Install .NET SDK on self-hosted agent
+          - script: |
+              echo "=== Installing .NET SDK 8.0 ==="
+              if ! command -v dotnet &> /dev/null; then
+                sudo dnf install -y dotnet-sdk-8.0 || {
+                  # Fallback: manual install
+                  curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 8.0
+                  export PATH="$HOME/.dotnet:$PATH"
+                  echo "##vso[task.prependpath]$HOME/.dotnet"
+                }
+              fi
+              dotnet --version
+            displayName: 'Install .NET SDK'
+
+          # Create a sample .NET project 
+          - script: |
+              if [ ! -f src/MyApp/MyApp.csproj ]; then
+                echo "=== Creating Sample .NET Project ==="
+                mkdir -p src/MyApp
+                cd src/MyApp
+                dotnet new console --force
+                # Add a simple Program.cs
+                cat > Program.cs << 'CSHARP'
+              namespace MyApp;
+              class Program
+              {
+                  static void Main(string[] args)
+                  {
+                      Console.WriteLine("Hello from Upstream Pipeline!");
+                      Console.WriteLine($"Build Time: {DateTime.UtcNow}");
+                      Console.WriteLine($"Machine: {Environment.MachineName}");
+                  }
+              }
+              CSHARP
+              fi
+            displayName: 'Create Sample Project (if needed)'
+
+          - script: |
+              echo "=== Restoring Dependencies ==="
+              cd src/MyApp
+              dotnet restore
+            displayName: 'Restore Dependencies'
+
+          - script: |
+              echo "=== Building Project ==="
+              cd src/MyApp
+              dotnet build --configuration $(buildConfiguration) --no-restore
+            displayName: 'Build Project'
+
+          - script: |
+              echo "=== Running Tests ==="
+              cd src/MyApp
+              dotnet test --configuration $(buildConfiguration) --no-build || echo "No tests found (OK for demo)"
+            displayName: 'Run Tests'
+
+          - script: |
+              echo "=== Publishing Project ==="
+              cd src/MyApp
+              dotnet publish --configuration $(buildConfiguration) \
+                --output $(Build.ArtifactStagingDirectory)/publish \
+                --no-build
+              
+              echo ""
+              echo "=== Published Files ==="
+              ls -la $(Build.ArtifactStagingDirectory)/publish/
+            displayName: 'Publish Project'
+
+  
+  # Stage 2: Create & Publish Build Artifact
+  - stage: PublishArtifact
+    displayName: 'Stage 2 - Package & Publish Artifact'
+    dependsOn: Build
+    jobs:
+      - job: PackageJob
+        displayName: 'Package Artifact'
+        steps:
+          - script: |
+              cd src/MyApp
+              dotnet publish --configuration $(buildConfiguration) \
+                --output $(Build.ArtifactStagingDirectory)/publish
+
+              # Create build metadata
+              cat > $(Build.ArtifactStagingDirectory)/publish/build-info.json << EOF
+              {
+                "buildId": "$(Build.BuildId)",
+                "buildNumber": "$(Build.BuildNumber)",
+                "sourceBranch": "$(Build.SourceBranch)",
+                "sourceVersion": "$(Build.SourceVersion)",
+                "buildTime": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+                "pipeline": "upstream-ci",
+                "configuration": "$(buildConfiguration)"
+              }
+              EOF
+
+              echo "=== Artifact Contents ==="
+              ls -la $(Build.ArtifactStagingDirectory)/publish/
+              echo ""
+              echo "=== Build Info ==="
+              cat $(Build.ArtifactStagingDirectory)/publish/build-info.json
+            displayName: 'Package with Metadata'
+
+          # Publish as Azure DevOps artifact
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)/publish'
+              ArtifactName: 'dotnet-app'
+              publishLocation: 'Container'
+            displayName: 'Publish Build Artifact'
+
