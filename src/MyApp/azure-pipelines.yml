@@ -114,7 +114,7 @@ stages:
               export PATH="$HOME/.dotnet:$PATH"
               echo "##vso[task.prependpath]$HOME/.dotnet"
               dotnet --version
-              displayName: 'Restore .NET PATH'
+            displayName: 'Install .NET SDK'
           - script: |
               cd src/MyApp
               dotnet publish --configuration $(buildConfiguration) \
