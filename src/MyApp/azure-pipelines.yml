@@ -117,6 +117,9 @@ stages:
             displayName: 'Install .NET SDK'
           - script: |
               cd src/MyApp
+              echo "=== Restore ==="
+              dotnet restore
+              echo "=== Publish ==="
               dotnet publish --configuration $(buildConfiguration) \
                 --output $(Build.ArtifactStagingDirectory)/publish
 
