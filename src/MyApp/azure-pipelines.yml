@@ -2,9 +2,6 @@ trigger:
   branches:
     include:
       - master
-  paths:
-    include:
-      - src/**
 
 pr:
   branches:
@@ -18,43 +15,33 @@ variables:
   buildConfiguration: 'Release'
 
 stages:
-  
-  # Stage 1: Build .NET Project
-  - stage: Build
-    displayName: 'Stage 1 - Build .NET Project'
+  - stage: BuildAndPublish
+    displayName: 'Build .NET + Publish Artifact'
     jobs:
       - job: BuildJob
-        displayName: 'Build & Test'
+        displayName: 'Build, Package & Publish'
         steps:
-          # Install .NET SDK on self-hosted agent
+          # Step 1: Install .NET SDK
           - script: |
               echo "=== Installing .NET SDK 8.0 ==="
-
-              # Method: Microsoft's official install script
-              curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
-              chmod +x dotnet-install.sh
-              ./dotnet-install.sh --channel 8.0 --install-dir $HOME/.dotnet
-
-              # Add to PATH for this step AND future steps
+              if ! command -v dotnet &> /dev/null || ! dotnet --list-sdks 2>/dev/null | grep -q "8.0"; then
+                curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+                chmod +x dotnet-install.sh
+                ./dotnet-install.sh --channel 8.0 --install-dir $HOME/.dotnet
+              fi
               export PATH="$HOME/.dotnet:$PATH"
               echo "##vso[task.prependpath]$HOME/.dotnet"
-
-              # Verify
-              echo ""
-              echo "=== Verification ==="
               dotnet --version
-              dotnet --list-sdks
-              echo ".NET SDK installed!"
+              echo ".NET SDK ready!"
             displayName: 'Install .NET SDK'
 
-          # Create a sample .NET project 
+          # Step 2: Create sample project 
           - script: |
               if [ ! -f src/MyApp/MyApp.csproj ]; then
                 echo "=== Creating Sample .NET Project ==="
                 mkdir -p src/MyApp
                 cd src/MyApp
                 dotnet new console --force
-                # Add a simple Program.cs
                 cat > Program.cs << 'CSHARP'
               namespace MyApp;
               class Program
@@ -68,62 +55,28 @@ stages:
               }
               CSHARP
               fi
-            displayName: 'Create Sample Project (if needed)'
+            displayName: 'Create Sample Project'
 
-          - script: |
-              echo "=== Restoring Dependencies ==="
-              cd src/MyApp
-              dotnet restore
-            displayName: 'Restore Dependencies'
-
-          - script: |
-              echo "=== Building Project ==="
-              cd src/MyApp
-              dotnet build --configuration $(buildConfiguration) --no-restore
-            displayName: 'Build Project'
-
-          - script: |
-              echo "=== Running Tests ==="
-              cd src/MyApp
-              dotnet test --configuration $(buildConfiguration) --no-build || echo "No tests found (OK for demo)"
-            displayName: 'Run Tests'
-
-          - script: |
-              echo "=== Publishing Project ==="
-              cd src/MyApp
-              dotnet publish --configuration $(buildConfiguration) \
-                --output $(Build.ArtifactStagingDirectory)/publish \
-                --no-build
-              
-              echo ""
-              echo "=== Published Files ==="
-              ls -la $(Build.ArtifactStagingDirectory)/publish/
-            displayName: 'Publish Project'
-
-  
-  # Stage 2: Create & Publish Build Artifact
-  - stage: PublishArtifact
-    
-    displayName: 'Stage 2 - Package & Publish Artifact'
-    dependsOn: Build
-    jobs:
-      - job: PackageJob
-        displayName: 'Package Artifact'
-        steps:
-          - script: |
-              export PATH="$HOME/.dotnet:$PATH"
-              echo "##vso[task.prependpath]$HOME/.dotnet"
-              dotnet --version
-            displayName: 'Install .NET SDK'
+          # Step 3: Restore + Build + Test
           - script: |
               cd src/MyApp
               echo "=== Restore ==="
               dotnet restore
-              echo "=== Publish ==="
+              echo "=== Build ==="
+              dotnet build --configuration $(buildConfiguration) --no-restore
+              echo "=== Test ==="
+              dotnet test --configuration $(buildConfiguration) --no-build || echo "No tests found (OK for demo)"
+              echo "Build successful!"
+            displayName: 'Restore, Build & Test'
+
+          # Step 4: Publish + Package with Metadata
+          - script: |
+              cd src/MyApp
+              echo "=== Publishing ==="
               dotnet publish --configuration $(buildConfiguration) \
                 --output $(Build.ArtifactStagingDirectory)/publish
 
-              # Create build metadata
+              echo "=== Creating Build Metadata ==="
               cat > $(Build.ArtifactStagingDirectory)/publish/build-info.json << EOF
               {
                 "buildId": "$(Build.BuildId)",
@@ -141,9 +94,10 @@ stages:
               echo ""
               echo "=== Build Info ==="
               cat $(Build.ArtifactStagingDirectory)/publish/build-info.json
-            displayName: 'Package with Metadata'
+              echo "Package ready!"
+            displayName: 'Publish & Package'
 
-          # Publish as Azure DevOps artifact
+          # Step 5: Publish as Azure DevOps artifact
           - task: PublishBuildArtifacts@1
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)/publish'
