@@ -103,12 +103,18 @@ stages:
   
   # Stage 2: Create & Publish Build Artifact
   - stage: PublishArtifact
+    
     displayName: 'Stage 2 - Package & Publish Artifact'
     dependsOn: Build
     jobs:
       - job: PackageJob
         displayName: 'Package Artifact'
         steps:
+          - script: |
+              export PATH="$HOME/.dotnet:$PATH"
+              echo "##vso[task.prependpath]$HOME/.dotnet"
+              dotnet --version
+              displayName: 'Restore .NET PATH'
           - script: |
               cd src/MyApp
               dotnet publish --configuration $(buildConfiguration) \
